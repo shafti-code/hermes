@@ -6,13 +6,26 @@ const c = @cImport({
 });
 
 const REQUEST = enum(u8) {
+    //initial request
+    //req:[1 req type][1 enet flag]
+    //res:[1 req type][16 uuid][1 enet flag]
     get_uuid = 0,
-    //[type - 1] [uuid 16][nametag 16][enet contorl flag]
-    //[1][16][16][1]
+    //req:[1 req type][uuid 16][16 name(all names are fixed size)]
+    //res:[1 req type][1 result enum]
     assign_name = 1,
+
+    //room related requests
     create_room = 2,
     join_room = 3,
-    game_packet = 4,
+    list_rooms = 4,
+    leave_room = 5,
+    begin_match = 6,
+
+    //game related requests
+
+    loaded = 7,
+    start_game = 8,
+    game_packet = 9,
     _,
 };
 
@@ -49,6 +62,9 @@ pub fn main() !void {
 
     var connected: bool = false;
     var got_uuid: bool = false;
+    var assigned_name: bool = false;
+    var created_room: bool = false;
+    var left_room: bool = false;
     var success: bool = false;
     var name_sent: bool = false;
     while (!success) {
@@ -59,18 +75,36 @@ pub fn main() !void {
             },
             c.ENET_EVENT_TYPE_NONE => {
                 if (connected and !got_uuid) {
-                    const message: c_char = 0;
+                    const message: c_char = @intFromEnum(REQUEST.get_uuid);
                     const packet: *c.ENetPacket = c.enet_packet_create(&message, 2, c.ENET_PACKET_FLAG_RELIABLE);
                     _ = c.enet_peer_send(peer, 0, packet);
                 } else if (connected and !name_sent) {
                     var message: [33]u8 = undefined;
-                    message[0] = 1;
+                    message[0] = @intFromEnum(REQUEST.assign_name);
                     @memcpy(message[1..17], &uuid);
                     @memcpy(message[17..33], "this, is my name");
                     const packet: *c.ENetPacket = c.enet_packet_create(&message, 34, c.ENET_PACKET_FLAG_RELIABLE);
                     _ = c.enet_peer_send(peer, 0, packet);
                     name_sent = true;
                     std.debug.print("sending name request\n", .{});
+                } else if (connected and !created_room){
+                    var message: [17]u8 = undefined;
+                    message[0] = @intFromEnum(REQUEST.create_room);
+                    @memcpy(message[1..17], &uuid);
+                    const packet: *c.ENetPacket = c.enet_packet_create(&message, message.len + 1, c.ENET_PACKET_FLAG_RELIABLE);
+                    _ = c.enet_peer_send(peer, 0, packet);
+                    created_room = true;
+                    std.debug.print("sending create_room request\n", .{});
+                } else if (connected and !left_room){
+
+                    var message: [17]u8 = undefined;
+                    message[0] = @intFromEnum(REQUEST.leave_room);
+                    @memcpy(message[1..17], &uuid);
+                    const packet: *c.ENetPacket = c.enet_packet_create(&message, message.len + 1, c.ENET_PACKET_FLAG_RELIABLE);
+                    _ = c.enet_peer_send(peer, 0, packet);
+                    left_room = true;
+                    std.debug.print("sending leave_room request\n", .{});
+
                 }
             },
             c.ENET_EVENT_TYPE_RECEIVE => {
@@ -84,11 +118,18 @@ pub fn main() !void {
                     },
                     .assign_name => {
                         std.debug.print("assign name response: {s}\n", .{packet.data[1..]});
+                        assigned_name = true;
+                    },
+                    .create_room => {
+                        std.debug.print("create room response: {s}\n", .{packet.data[1..]});
                         success = true;
                     },
-                    .create_room => {},
-                    .game_packet => {},
                     .join_room => {},
+                    .leave_room => {},
+                    .start_game => {},
+                    .game_packet => {},
+                    .list_rooms => {},
+                    .ready => {},
                     _ => {
                         const reply = c.enet_packet_create(
                             "lowkey kill yourself dude",
