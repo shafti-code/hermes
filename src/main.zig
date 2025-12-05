@@ -5,12 +5,7 @@ const c = @cImport({
 });
 
 const Request = enum(u8) {
-    //initial request
-    //req:[1 req type][1 enet flag]
-    //res:[1 req type][16 uuid][1 enet flag]
     get_uuid = 0,
-    //req:[1 req type][uuid 16][16 name(all names are fixed size)]
-    //res:[1 req type][1 result enum]
     assign_name = 1,
 
     //room related requests
@@ -28,11 +23,6 @@ const Request = enum(u8) {
     _,
 };
 
-const Vector2 = struct {
-    x: f32,
-    y: f32,
-};
-
 const Result = enum(u8) {
     ok = 0,
     bad_request = 1,
@@ -46,7 +36,7 @@ const Player = struct {
     opponent_id: c.uuid_t,
     peer: c.ENetPeer,
 
-    position: ?Vector2,
+    loaded: bool,
 };
 
 const Room = struct {
@@ -54,18 +44,30 @@ const Room = struct {
     full: bool,
     host_id: c.uuid_t,
     opp_id: c.uuid_t,
+    name: [16]u8,
 };
-pub fn status_response(event: c.ENetEvent, res_type: Request, result: Result) void {
+pub fn status_response(player: [*c]c.ENetPeer, res_type: Request, result: Result) void {
     var content: [2]u8 = undefined;
     content[0] = @intFromEnum(res_type);
     content[1] = @intFromEnum(result);
 
     const reply: *c.ENetPacket = c.enet_packet_create(
         &content,
-        content.len + 1,
+        content.len,
         c.ENET_PACKET_FLAG_RELIABLE,
     );
-    _ = c.enet_peer_send(event.peer, 0, reply);
+    _ = c.enet_peer_send(player, 0, reply);
+}
+
+pub fn getRoomPtr(rooms: std.array_list.Managed(Room), player: c.uuid_t) ?*Room {
+    for (rooms.items) |*room| {
+        if (std.mem.eql(u8, room.host_id[0..], player[0..])) {
+            return room;
+        } else if (std.mem.eql(u8, room.opp_id[0..], player[0..])) {
+            return room;
+        }
+    }
+    return null;
 }
 
 pub fn main() !void {
@@ -77,7 +79,7 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
 
-    var players = std.AutoHashMap(c.uuid_t,Player).init(allocator);
+    var players = std.AutoHashMap(c.uuid_t, Player).init(allocator);
     defer players.deinit();
 
     var rooms = std.array_list.Managed(Room).init(allocator);
@@ -122,7 +124,7 @@ pub fn main() !void {
                             .nametag = .{0} ** 16,
                             .opponent_id = .{0} ** 16,
                             .peer = event.peer.*,
-                            .position = null,
+                            .loaded = false,
                         });
                         var message: [17]u8 = undefined;
                         message[0] = @intFromEnum(Request.get_uuid);
@@ -135,8 +137,6 @@ pub fn main() !void {
                     .assign_name => {
                         std.debug.print("got a request for a name {s} with length {}\n", .{ packet.data[17..33], packet.dataLength });
 
-                        //create a placeholder for player id and then copy the bytes over
-                        //compiler optimizes this actually so we cna do that practically for free
                         var client_id: c.uuid_t = undefined;
                         client_id = packet.data[1..17].*;
 
@@ -144,12 +144,12 @@ pub fn main() !void {
                             //copy the name bytes to the player instance
                             @memcpy(player.nametag[0..], packet.data[17..33]);
 
-                            status_response(event, Request.assign_name, Result.ok);
+                            status_response(event.peer, Request.assign_name, Result.ok);
 
                             std.debug.print("assigned a name, {s}\n", .{player.nametag});
                         } else {
                             std.debug.print("couldnt find the player assosciated with that id: {x}\n", .{packet.data[17..33]});
-                            status_response(event, Request.create_room, Result.bad_request);
+                            status_response(event.peer, Request.assign_name, Result.bad_request);
                         }
                     },
                     .create_room => {
@@ -164,16 +164,17 @@ pub fn main() !void {
                                 .started = false,
                                 .host_id = player.id,
                                 .opp_id = .{0} ** 16,
+                                .name = packet.data[17..33].*,
                             })) |_| {
-                                status_response(event, Request.create_room, Result.ok);
+                                status_response(event.peer, Request.create_room, Result.ok);
                                 std.debug.print("assigned a name, {s}\n", .{player.nametag});
                             } else |err| {
-                                status_response(event, Request.create_room, Result.server_error);
+                                status_response(event.peer, Request.create_room, Result.server_error);
                                 std.debug.print("got an error : {}\n", .{err});
                             }
                         } else {
                             std.debug.print("couldnt find the player assosciated with that id: {x}\n", .{packet.data[17..33]});
-                            status_response(event, Request.create_room, Result.bad_request);
+                            status_response(event.peer, Request.create_room, Result.bad_request);
                         }
                     },
                     .join_room => {
@@ -186,22 +187,18 @@ pub fn main() !void {
                             if (players.getPtr(client_id)) |client| {
                                 host.opponent_id = client_id;
                                 client.opponent_id = hoster_id;
-
-                                for (rooms.items) |*room| {
-                                    if (std.mem.eql(u8,room.host_id[0..],hoster_id[0..])) {
-                                        if (room.full == false) {
-                                            @memcpy(room.opp_id[0..],client_id[0..]);
-                                            room.full = true;
+                                if (getRoomPtr(rooms, client_id)) |roomPtr| {
+                                    if (std.mem.eql(u8, roomPtr.*.host_id[0..], hoster_id[0..])) {
+                                        if (roomPtr.*.full == false) {
+                                            @memcpy(roomPtr.*.opp_id[0..], client_id[0..]);
+                                            roomPtr.*.full = true;
                                         }
                                     }
                                 }
-
                                 var message: [17]u8 = undefined;
                                 message[0] = @intFromEnum(Request.join_room);
-
                                 @memcpy(message[1..17], client.nametag[0..]);
-
-                                const reply: *c.ENetPacket = c.enet_packet_create(&message, message.len + 1, c.ENET_PACKET_FLAG_RELIABLE);
+                                const reply: *c.ENetPacket = c.enet_packet_create(&message, message.len, c.ENET_PACKET_FLAG_RELIABLE);
                                 _ = c.enet_peer_send(&host.peer, 0, reply);
                             } else {
                                 std.debug.print("couldnt find the client assosciated with that id: {x} (join room)\n", .{packet.data[17..33]});
@@ -222,23 +219,22 @@ pub fn main() !void {
                                 client.opponent_id = .{0} ** 16;
 
                                 var should_leave = false;
-                                for (rooms.items,0..) |*room,i| {
-                                    if (std.mem.eql(u8,room.host_id[0..],client.id[0..])) {
+                                for (rooms.items, 0..) |*room, i| {
+                                    if (std.mem.eql(u8, room.host_id[0..], client.id[0..])) {
                                         _ = rooms.swapRemove(i);
                                         should_leave = true;
-                                    } else if (std.mem.eql(u8,room.opp_id[0..],client.id[0..])) {
+                                    } else if (std.mem.eql(u8, room.opp_id[0..], client.id[0..])) {
                                         room.opp_id = .{0} ** 16;
                                         room.full = false;
                                     }
-                                } 
-
+                                }
 
                                 var message: [2]u8 = undefined;
                                 message[0] = @intFromEnum(Request.leave_room);
                                 message[1] = @intFromBool(should_leave);
                                 const reply: *c.ENetPacket = c.enet_packet_create(
                                     &message,
-                                    message.len + 1,
+                                    message.len,
                                     c.ENET_PACKET_FLAG_RELIABLE,
                                 );
                                 _ = c.enet_peer_send(&opponent.peer, 0, reply);
@@ -250,11 +246,71 @@ pub fn main() !void {
                         }
                     },
                     .list_rooms => {
+                        var roomIds = std.array_list.Managed(u8).init(allocator);
+                        defer roomIds.deinit();
+                        if (roomIds.append(@intFromEnum(Request.list_rooms))) |_| {} else |err| {
+                            std.debug.print("error {}\n", .{err});
+                        }
+                        for (rooms.items) |*room| {
+                            if (roomIds.appendSlice(room.host_id[0..])) |_| {} else |err| {
+                                std.debug.print("error ! {}\n", .{err});
+                            }
+                            if (roomIds.appendSlice(room.name[0..])) |_| {} else |err| {
+                                std.debug.print("error ! {}\n", .{err});
+                            }
+                        }
+                        const message: []u8 = roomIds.items[0..];
+                        const reply: *c.ENetPacket = c.enet_packet_create(
+                            @ptrCast(&message),
+                            message.len,
+                            c.ENET_PACKET_FLAG_RELIABLE,
+                        );
+                        _ = c.enet_peer_send(event.peer, 0, reply);
                     },
-                    .start_game => {},
-                    .game_packet => {},
+                    .start_game => {
+                        const client_id: c.uuid_t = packet.data[1..17].*;
+                        if (players.getPtr(client_id)) |player| {
+                            if (players.getPtr(player.*.opponent_id)) |opponent| {
+                                status_response(&player.peer, Request.start_game, Result.ok);
+                                status_response(&opponent.peer, Request.start_game, Result.ok);
+                            }
+                        }
+                    },
+                    .game_packet => {
+                        const client_id: c.uuid_t = packet.data[1..17].*;
+                        if (players.getPtr(client_id)) |player| {
+                            if (players.getPtr(player.*.opponent_id)) |opponent| {
+                                var message: [10]u8 = undefined;
+                                message[0] = @intFromEnum(Request.game_packet);
+                                @memcpy(message[1..5], packet.data[17..21]);
+                                @memcpy(message[5..10], packet.data[21..26]);
+
+                                const reply: *c.ENetPacket = c.enet_packet_create(
+                                    &message,
+                                    message.len,
+                                    c.ENET_PACKET_FLAG_UNSEQUENCED,
+                                );
+                                _ = c.enet_peer_send(&opponent.peer, 1, reply);
+                            }
+                        }
+                    },
                     .begin_match => {},
-                    .loaded => {},
+                    .loaded => {
+                        const client_id: c.uuid_t = packet.data[1..17].*;
+                        if (players.getPtr(client_id)) |player| {
+                            if (players.getPtr(player.*.opponent_id)) |opponent| {
+                                player.*.loaded = true;
+                                if (player.*.loaded and opponent.*.loaded) {
+                                    status_response(&player.peer, Request.begin_match, Result.ok);
+                                    status_response(&opponent.peer, Request.begin_match, Result.ok);
+                                }
+                            } else {
+                                std.debug.print("(loaded) couldnt the opponent of the player\n", .{});
+                            }
+                        } else {
+                            std.debug.print("(loaded) couldnt find player with id: {x}\n", .{client_id});
+                        }
+                    },
                     _ => {
                         const reply = c.enet_packet_create(
                             "invalid request",
