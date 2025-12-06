@@ -7,9 +7,32 @@ run with
 ```
 zig build run
 ```
-
-
 # Hermes Protocol - Packet Documentation
+
+```
+[0] = 1
+[1..16] = client uuid (16 bytes)
+[17..32] = nametag (16 bytes, not NUL-terminated on wire)
+```
+Server replies with a 2-byte status packet: `[1][Result]`.
+
+---
+
+### create_room (2)
+Request size: 1 + 16 + 16 = 33 bytes
+
+```
+[0] = 2
+[1..16] = client uuid
+[17..32] = room name (16 bytes)
+```
+Server replies with a 2-byte status packet: `[2][Result]`.
+
+---
+
+### join_room (3)
+Request size: 1 + 16 + 16 = 33 bytes
+
 ```
 [0] = 3
 [1..16] = client uuid (the joiner)
