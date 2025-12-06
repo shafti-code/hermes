@@ -59,7 +59,7 @@ prep:
 # The binary now depends on the source and the 'prep' step.
 $(BINARY): $(SRC) prep
 	@echo "Building for $(PLATFORM)..."
-	$(ZIG) build-lib $(SRC) -dynamic -femit-h=$(HEADER) -femit-bin=$(BINARY) $(LIBS) $(ZIG_LDFLAGS)
+	$(ZIG) build-lib $(SRC) -static -femit-h=$(HEADER) -femit-bin=$(BINARY) $(LIBS) $(ZIG_LDFLAGS)
 	@echo "✅ SUCCESS! Library built at: $(BINARY)"
 	@echo "✅ Header generated at: $(HEADER)"
 
