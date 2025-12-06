@@ -43,7 +43,7 @@ export fn hermesInit() void {
     address.port = 6666;
     client = c.enet_host_create(
         null,
-        0,
+        1,
         2,
         0,
         0,
@@ -52,63 +52,63 @@ export fn hermesInit() void {
         std.debug.print("Could not create ENet server\n", .{});
         return;
     }
-    _ = c.enet_address_set_host(&address, "10.20.20.9");
+    _ = c.enet_address_set_host(&address, "localhost");
 
     peer = c.enet_host_connect(client, &address, 2, 0);
 
     if (peer == null) {
         std.debug.print("no peers bozo \n", .{});
     }
+    std.debug.print("\nHERMES -> INITIALIZATION SUCESSFULL\n\n", .{});
 }
-
 export fn hermesGetUuid(id: *c.uuid_t) void {
-    const message = @intFromEnum(Request.get_uuid);
-    const request = c.enet_packet_create(&message, 1, c.ENET_PACKET_FLAG_RELIABLE);
-    _ = c.enet_peer_send(peer, 0, request);
+    var connected: bool = false;
     var success: bool = false;
-    const result = c.enet_host_service(client, &event, 0);
-    if (result > 0) switch (event.type) {
-        c.ENET_EVENT_TYPE_CONNECT => {
-            std.debug.print("client connected\n", .{});
-        },
-        c.ENET_EVENT_TYPE_RECEIVE => {
-            const packet = event.packet.*;
-            const req_type: Request = @enumFromInt(packet.data[0]);
-            switch (req_type) {
-                .get_uuid => {
-                    @memcpy(
-                        @as([*]u8, &id.*), // pointer to the bytes of the 16-byte array
-                        packet.data[1..17], // 16 bytes from the packet
-                    );
+    while (!success) {
+        _ = c.enet_host_service(client, &event, 0);
+        switch (event.type) {
+            c.ENET_EVENT_TYPE_CONNECT => {
+                std.debug.print("client connected\n", .{});
+                connected = true;
+            },
+            c.ENET_EVENT_TYPE_RECEIVE => {
+                const packet = event.packet.*;
+                const req_type: Request = @enumFromInt(packet.data[0]);
+                switch (req_type) {
+                    .get_uuid => {
+                        @memcpy(id[0..16],packet.data[1..17]);
 
-                    success = true;
-                },
-                .assign_name => {},
-                .create_room => {},
-                .join_room => {},
-                .leave_room => {},
-                .list_rooms => {},
-                .start_game => {},
-                .game_packet => {},
-                .begin_match => {},
-                .loaded => {},
-                _ => {},
-            }
-            c.enet_packet_destroy(event.packet);
-        },
-        c.ENET_EVENT_TYPE_NONE => {
-            std.debug.print("we chilling nothing is happening \n", .{});
-        },
-        c.ENET_EVENT_TYPE_DISCONNECT => {
-            std.debug.print("client disconnected\n", .{});
-        },
-        else => {
-            std.debug.print("weird packet\n", .{});
-        },
-    } else if (result == 0) {
-        std.debug.print("waiting for connections\n", .{});
-    } else {
-        std.debug.print("enet_host_service error\n", .{});
+                        success = true;
+                        std.debug.print("\nHERMES -> GOT UUID\n\n", .{});
+                    },
+                    .assign_name => {},
+                    .create_room => {},
+                    .join_room => {},
+                    .leave_room => {},
+                    .list_rooms => {},
+                    .start_game => {},
+                    .game_packet => {},
+                    .begin_match => {},
+                    .loaded => {},
+                    _ => {},
+                }
+                c.enet_packet_destroy(event.packet);
+            },
+            c.ENET_EVENT_TYPE_NONE => {
+                if (connected) {
+                    std.debug.print("sending uuid request\n", .{});
+                    const message = @intFromEnum(Request.get_uuid);
+                    const request = c.enet_packet_create(&message, 1, c.ENET_PACKET_FLAG_RELIABLE);
+                    _ = c.enet_peer_send(peer, 0, request);
+                }
+            },
+            c.ENET_EVENT_TYPE_DISCONNECT => {
+                std.debug.print("client disconnected\n", .{});
+            },
+            else => {
+                std.debug.print("weird packet\n", .{});
+            },
+        }
     }
 }
 
