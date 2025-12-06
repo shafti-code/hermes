@@ -52,7 +52,7 @@ export fn hermesInit() void {
         std.debug.print("Could not create ENet server\n", .{});
         return;
     }
-    _ = c.enet_address_set_host(&address, "localhost");
+    _ = c.enet_address_set_host(&address, "10.20.20.9");
 
     peer = c.enet_host_connect(client, &address, 2, 0);
 
