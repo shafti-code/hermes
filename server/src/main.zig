@@ -97,6 +97,7 @@ pub fn main() !void {
 
     var address: c.ENetAddress = undefined;
     address.host = c.ENET_HOST_ANY;
+    _ = c.enet_address_set_host(&address, "56.228.35.17");
     address.port = 6666;
 
     const server = c.enet_host_create(
