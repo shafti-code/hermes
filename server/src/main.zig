@@ -31,7 +31,6 @@ const Result = enum(u8) {
 
 const Player = struct {
     id: c.uuid_t,
-    nametag: [16]u8,
 
     opponent_id: c.uuid_t,
     peer: c.ENetPeer,
@@ -132,7 +131,7 @@ pub fn main() !void {
                         c.uuid_generate_random(&id);
                         try players.put(id, Player{
                             .id = id,
-                            .nametag = .{0} ** 16,
+                            // .nametag = .{0} ** 16,
                             .opponent_id = .{0} ** 16,
                             .peer = event.peer.*,
                             .loaded = false,
@@ -151,13 +150,14 @@ pub fn main() !void {
                         var client_id: c.uuid_t = undefined;
                         client_id = packet.data[1..17].*;
 
-                        if (players.getPtr(client_id)) |player| {
+                        if (players.getPtr(client_id)) |_| {
+                            //                          ^ put player here if the specimen decides he wants to have those names back
                             //copy the name bytes to the player instance
-                            @memcpy(player.nametag[0..], packet.data[17..33]);
+                            // @memcpy(player.nametag[0..], packet.data[17..33]);
 
                             status_response(event.peer, Request.assign_name, Result.ok);
 
-                            std.debug.print("assigned a name, {s}\n", .{player.nametag});
+                            // std.debug.print("assigned a name, {s}\n", .{player.nametag});
                         } else {
                             std.debug.print("couldnt find the player assosciated with that id: {x}\n", .{packet.data[17..33]});
                             status_response(event.peer, Request.assign_name, Result.bad_request);
@@ -178,7 +178,7 @@ pub fn main() !void {
                                 .name = packet.data[17..33].*,
                             })) |_| {
                                 status_response(event.peer, Request.create_room, Result.ok);
-                                std.debug.print("assigned a name, {s}\n", .{player.nametag});
+                                // std.debug.print("assigned a name, {s}\n", .{player.nametag});
                             } else |err| {
                                 status_response(event.peer, Request.create_room, Result.server_error);
                                 std.debug.print("got an error : {}\n", .{err});
@@ -208,13 +208,15 @@ pub fn main() !void {
                                 }
                                 var message: [17]u8 = undefined;
                                 message[0] = @intFromEnum(Request.join_room);
-                                @memcpy(message[1..17], client.nametag[0..]);
+                                // @memcpy(message[1..17], client.nametag[0..]);
+                                @memcpy(message[1..17], client.id[0..]);
                                 const reply: *c.ENetPacket = c.enet_packet_create(&message, message.len, c.ENET_PACKET_FLAG_RELIABLE);
                                 _ = c.enet_peer_send(&host.peer, 0, reply);
 
                                 var client_message: [17]u8 = undefined;
                                 message[0] = @intFromEnum(Request.join_room);
-                                @memcpy(message[1..17], host.nametag[0..]);
+                                // @memcpy(message[1..17], host.nametag[0..]);
+                                @memcpy(message[1..17], host.id[0..]);
                                 const client_reply: *c.ENetPacket = c.enet_packet_create(&client_message, client_message.len, c.ENET_PACKET_FLAG_RELIABLE);
                                 _ = c.enet_peer_send(event.peer, 0, client_reply);
                             } else {
@@ -305,17 +307,16 @@ pub fn main() !void {
                         const client_id: c.uuid_t = packet.data[1..17].*;
                         if (players.getPtr(client_id)) |player| {
                             if (players.getPtr(player.*.opponent_id)) |opponent| {
-                                var message: [10]u8 = undefined;
+                                var message: [15]u8 = undefined;
                                 message[0] = @intFromEnum(Request.game_packet);
-                                @memcpy(message[1..5], packet.data[17..21]);
-                                @memcpy(message[5..10], packet.data[21..26]);
+                                @memcpy(message[1..15], packet.data[17..31]);
 
                                 const reply: *c.ENetPacket = c.enet_packet_create(
                                     &message,
                                     message.len,
                                     c.ENET_PACKET_FLAG_UNSEQUENCED,
                                 );
-                                _ = c.enet_peer_send(&opponent.peer, 1, reply);
+                                _ = c.enet_peer_send(&opponent.peer, 0, reply);
                             }
                         }
                     },
